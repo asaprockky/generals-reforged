@@ -1,0 +1,18 @@
+# Game install (2.7 GB of retail binaries/archives) - never tracked
+/Command Conquer Generals - Zero Hour/
+
+# Engine source is its own git repo
+/engine/
+
+# Build outputs
+/dist/
+*.big
+__pycache__/
+
+# Local-only: backups, retail data extraction, builds and release packages
+/backups/
+/baseline/
+/build-release/
+/builds/
+/release/
+/tools/factiongen/out/

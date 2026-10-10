@@ -1,0 +1,1507 @@
+diff --git a/Core/GameEngine/Include/Common/FramePacer.h b/Core/GameEngine/Include/Common/FramePacer.h
+index 4e914432c..6650e5a0e 100644
+--- a/Core/GameEngine/Include/Common/FramePacer.h
++++ b/Core/GameEngine/Include/Common/FramePacer.h
+@@ -43,6 +43,8 @@ public:
+ 
+ 	void setFramesPerSecondLimit( Int fps ); ///< Set the update fps limit.
+ 	Int  getFramesPerSecondLimit() const; ///< Get the update fps limit.
++	void setGameSpeedFps( Int fps ); ///< Reforged: run the game logic at fps and render at the display refresh rate (at least fps).
++	static Int getDisplayRefreshRate(); ///< Reforged: refresh rate of the primary display, 60 if unknown.
+ 	void enableFramesPerSecondLimit( Bool enable ); ///< Enable or disable the update fps limit.
+ 	Bool isFramesPerSecondLimitEnabled() const; ///< Returns whether the fps limit is enabled here.
+ 	Bool isActualFramesPerSecondLimitEnabled() const; ///< Returns whether the fps limit is actually enabled when considering all game settings and setups.
+diff --git a/Core/GameEngine/Include/Common/GameDefines.h b/Core/GameEngine/Include/Common/GameDefines.h
+index a882c0d66..a1ec1b1c3 100644
+--- a/Core/GameEngine/Include/Common/GameDefines.h
++++ b/Core/GameEngine/Include/Common/GameDefines.h
+@@ -99,8 +99,12 @@
+ // Note: Retail compatibility must not be broken before this project officially does.
+ // Use RETAIL_COMPATIBLE_CRC, RETAIL_COMPATIBLE_DATA and RETAIL_COMPATIBLE_XFER_SAVE to guard breaking changes.
+ 
++// Reforged @tweak The mod is not CRC compatible with retail anyway (VS2022 build, changed game logic),
++// so enable the upstream fixes that are held back for CRC compatibility (power plants and Supply Drop
++// Zones under construction, crate double pickup, hordes, battle plans, Chinooks, ...). Save game,
++// data and networking compatibility guards stay at their defaults.
+ #ifndef RETAIL_COMPATIBLE_CRC
+-#define RETAIL_COMPATIBLE_CRC (1) // Game is expected to be CRC compatible with retail Generals 1.08, Zero Hour 1.04
++#define RETAIL_COMPATIBLE_CRC (0) // Game is expected to be CRC compatible with retail Generals 1.08, Zero Hour 1.04
+ #endif
+ 
+ #ifndef RETAIL_COMPATIBLE_DATA
+diff --git a/Core/GameEngine/Include/GameClient/ControlBarScheme.h b/Core/GameEngine/Include/GameClient/ControlBarScheme.h
+index fd1d871ee..c168f300b 100644
+--- a/Core/GameEngine/Include/GameClient/ControlBarScheme.h
++++ b/Core/GameEngine/Include/GameClient/ControlBarScheme.h
+@@ -267,6 +267,7 @@ public:
+ 	static void parseAnimatingPartImage( INI* ini, void *instance, void *store, const void *userData );	///< parse the image part of the animation part :)
+ 
+ 	ControlBarScheme *findControlBarScheme( AsciiString name ); ///< attempt to find the control bar scheme by it's name
++	ControlBarScheme *findBestControlBarSchemeForSide( const AsciiString& side ); ///< Reforged: highest-resolution scheme for a side, or nullptr
+ 	ControlBarScheme *newControlBarScheme( AsciiString name );	///< create a new control bar scheme and return it.
+ 
+ 	void preloadAssets( TimeOfDay timeOfDay );									///< preload the assets
+diff --git a/Core/GameEngine/Include/GameClient/Display.h b/Core/GameEngine/Include/GameClient/Display.h
+index 9fc937bfa..9d20c68c5 100644
+--- a/Core/GameEngine/Include/GameClient/Display.h
++++ b/Core/GameEngine/Include/GameClient/Display.h
+@@ -86,6 +86,12 @@ public:
+ 	virtual void setHeight( UnsignedInt height );									///< Sets the height of the display
+ 	virtual UnsignedInt getWidth() { return m_width; }			///< Returns the width of the display
+ 	virtual UnsignedInt getHeight() { return m_height; }		///< Returns the height of the display
++
++	// Reforged @feature Widescreen UI. The 800x600 UI layout is scaled uniformly by the display height
++	// and centered on displays wider than 4:3, instead of being stretched to the full display width.
++	// Displays that are 4:3 or narrower keep the original scaling, and the offset is then 0.
++	UnsignedInt getUIWidth() { const UnsignedInt w = getHeight() * 4 / 3; return getWidth() < w ? getWidth() : w; }	///< Width of the centered 4:3 UI area
++	Int getUIOffsetX() { return ((Int)getWidth() - (Int)getUIWidth()) / 2; }	///< Left edge of the centered 4:3 UI area
+ 	virtual void setBitDepth( UnsignedInt bitDepth ) { m_bitDepth = bitDepth; }
+ 	virtual UnsignedInt getBitDepth() { return m_bitDepth; }
+ 	virtual void setWindowed( Bool windowed ) { m_windowed = windowed; }  ///< set windowed/fullscreen flag
+diff --git a/Core/GameEngine/Source/Common/CommandLine.cpp b/Core/GameEngine/Source/Common/CommandLine.cpp
+index ed8e6e3fc..968e9716f 100644
+--- a/Core/GameEngine/Source/Common/CommandLine.cpp
++++ b/Core/GameEngine/Source/Common/CommandLine.cpp
+@@ -745,6 +745,34 @@ Int parseLoadSave(char *args[], int num)
+ 	return 1;
+ }
+ 
++#if RTS_ZEROHOUR
++// Reforged @feature Developer quick start: -skirmishTest <PlayerTemplate> [<AIPlayerTemplate> [<map>]] starts a
++// skirmish against one easy AI, without the menus. The map defaults to the last skirmish map. See StartTestSkirmish().
++Int parseSkirmishTest(char *args[], int num)
++{
++	if (num > 1)
++	{
++		TheWritableGlobalData->m_testSkirmishFaction = args[1];
++		Int used = 2;
++		if (num > 2 && args[2][0] != '-')
++		{
++			TheWritableGlobalData->m_testSkirmishAIFaction = args[2];
++			used = 3;
++			if (num > 3 && args[3][0] != '-')
++			{
++				TheWritableGlobalData->m_testSkirmishMap = args[3];
++				used = 4;
++			}
++		}
++		TheWritableGlobalData->m_shellMapOn = FALSE;
++		TheWritableGlobalData->m_playIntro = FALSE;
++		TheWritableGlobalData->m_playSizzle = FALSE;
++		return used;
++	}
++	return 1;
++}
++#endif
++
+ Int parseLoadReplay(char *args[], int num)
+ {
+ 	if (num > 1)
+@@ -1212,6 +1240,11 @@ static CommandLineParam paramsForEngineInit[] =
+ 	// TheSuperHackers @feature bobtista 08/08/2026 Play a replay file from the command line.
+ 	{ "-loadreplay", parseLoadReplay },
+ 
++#if RTS_ZEROHOUR
++	// Reforged @feature Start a skirmish as a given faction from the command line (testing).
++	{ "-skirmishTest", parseSkirmishTest },
++#endif
++
+ 	// TheSuperHackers @feature xezon 03/08/2025 Force full viewport for 'Control Bar Pro' Addons like GenTool did it.
+ 	{ "-forcefullviewport", parseFullViewport },
+ 
+diff --git a/Core/GameEngine/Source/Common/FramePacer.cpp b/Core/GameEngine/Source/Common/FramePacer.cpp
+index 992cd45c7..6b33e55e7 100644
+--- a/Core/GameEngine/Source/Common/FramePacer.cpp
++++ b/Core/GameEngine/Source/Common/FramePacer.cpp
+@@ -93,6 +93,30 @@ Int FramePacer::getFramesPerSecondLimit()  const
+ 	return m_maxFPS;
+ }
+ 
++//-------------------------------------------------------------------------------------------------
++// Reforged @feature Smooth rendering. Originally the fps limit was also the game speed, because the
++// game logic advanced once per rendered frame. Now the game speed drives the logic time scale, and
++// the render limit follows the display refresh rate. The engine interpolates drawn movement and
++// animation between logic frames, so the picture is smooth while the game runs at its normal speed.
++// Ctrl+Numpad +/- still change the render limit. Network games keep their own logic rate.
++//-------------------------------------------------------------------------------------------------
++void FramePacer::setGameSpeedFps( Int fps )
++{
++	setLogicTimeScaleFps(fps);
++	enableLogicTimeScale(TRUE);
++	setFramesPerSecondLimit(std::max(fps, getDisplayRefreshRate()));
++}
++
++Int FramePacer::getDisplayRefreshRate()
++{
++	DEVMODE mode;
++	memset(&mode, 0, sizeof(mode));
++	mode.dmSize = sizeof(mode);
++	if (EnumDisplaySettings(nullptr, ENUM_CURRENT_SETTINGS, &mode) && mode.dmDisplayFrequency > 1)
++		return clamp<Int>(30, (Int)mode.dmDisplayFrequency, 360);
++	return 60;
++}
++
+ void FramePacer::enableFramesPerSecondLimit( Bool enable )
+ {
+ 	m_enableFpsLimit = enable;
+diff --git a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBar.cpp b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBar.cpp
+index 5fb60f70a..3d19a6986 100644
+--- a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBar.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBar.cpp
+@@ -3827,5 +3827,8 @@ void ControlBar::setFullViewportHeight()
+ 
+ void ControlBar::setScaledViewportHeight()
+ {
+-	TheTacticalView->setHeight(TheDisplay->getHeight() * TheGlobalData->m_viewportHeightScale);
++	// Reforged @feature Widescreen UI: the control bar is centered on displays wider than 4:3, so draw
++	// the world at full height to fill the screen corners beside it.
++	const Real heightScale = TheDisplay->getUIOffsetX() > 0 ? 1.0f : TheGlobalData->m_viewportHeightScale;
++	TheTacticalView->setHeight(TheDisplay->getHeight() * heightScale);
+ }
+diff --git a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarScheme.cpp b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarScheme.cpp
+index 4dce3dcaa..d2b86f863 100644
+--- a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarScheme.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarScheme.cpp
+@@ -427,9 +427,11 @@ void ControlBarScheme::init()
+ 		TheControlBar->setArrowImage( m_genArrow);
+ 	}
+ 	GameWindow *win = nullptr;
++	// Reforged @feature Widescreen UI: place the buttons in the centered 4:3 UI area.
+ 	Coord2D resMultiplier;
+-	resMultiplier.x = TheDisplay->getWidth()/INT_TO_REAL(m_ScreenCreationRes.x) ;
++	resMultiplier.x = TheDisplay->getUIWidth()/INT_TO_REAL(m_ScreenCreationRes.x) ;
+ 	resMultiplier.y = TheDisplay->getHeight()/INT_TO_REAL(m_ScreenCreationRes.y);
++	const Int uiOffsetX = TheDisplay->getUIOffsetX();
+ 
+ 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:PopupCommunicator" ) );
+ 	if(win)
+@@ -448,12 +450,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_chatUL.x * resMultiplier.x - parX;
++			x = m_chatUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_chatUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_chatUL.x * resMultiplier.x;
++			x = m_chatUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_chatUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -473,12 +475,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_workerUL.x * resMultiplier.x - parX;
++			x = m_workerUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_workerUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_workerUL.x * resMultiplier.x;
++			x = m_workerUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_workerUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -504,12 +506,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_optionsUL.x * resMultiplier.x - parX;
++			x = m_optionsUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_optionsUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_optionsUL.x * resMultiplier.x;
++			x = m_optionsUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_optionsUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -529,12 +531,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_beaconUL.x * resMultiplier.x - parX;
++			x = m_beaconUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_beaconUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_beaconUL.x * resMultiplier.x;
++			x = m_beaconUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_beaconUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -551,12 +553,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_moneyUL.x * resMultiplier.x - parX;
++			x = m_moneyUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_moneyUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_moneyUL.x * resMultiplier.x;
++			x = m_moneyUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_moneyUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -573,12 +575,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_powerBarUL.x * resMultiplier.x - parX;
++			x = m_powerBarUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_powerBarUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_powerBarUL.x * resMultiplier.x;
++			x = m_powerBarUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_powerBarUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -601,12 +603,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_generalUL.x * resMultiplier.x - parX;
++			x = m_generalUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_generalUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_generalUL.x * resMultiplier.x;
++			x = m_generalUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_generalUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -627,12 +629,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_minMaxUL.x * resMultiplier.x - parX;
++			x = m_minMaxUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_minMaxUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_minMaxUL.x * resMultiplier.x;
++			x = m_minMaxUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_minMaxUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -651,12 +653,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_uAttackUL.x * resMultiplier.x - parX;
++			x = m_uAttackUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_uAttackUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_uAttackUL.x * resMultiplier.x;
++			x = m_uAttackUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_uAttackUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -1050,7 +1052,7 @@ void ControlBarSchemeManager::setControlBarScheme(AsciiString schemeName)
+ 	if(tempScheme)
+ 	{
+ 		// setup the multiplier value
+-		m_multiplier.x = (Real)TheDisplay->getWidth() / tempScheme->m_ScreenCreationRes.x;
++		m_multiplier.x = (Real)TheDisplay->getUIWidth() / tempScheme->m_ScreenCreationRes.x;
+ 		m_multiplier.y = (Real)TheDisplay->getHeight() / tempScheme->m_ScreenCreationRes.y;
+ 		m_currentScheme = tempScheme;
+ 	}
+@@ -1075,12 +1077,16 @@ void ControlBarSchemeManager::update()
+ //-----------------------------------------------------------------------------
+ void ControlBarSchemeManager::drawForeground( ICoord2D offset )
+ {
++	// Reforged @feature Widescreen UI: the scheme images are in absolute screen space, so shift
++	// them into the centered 4:3 UI area like the control bar windows.
++	offset.x += TheDisplay->getUIOffsetX();
+ 	if(m_currentScheme)
+ 		m_currentScheme->drawForeground( m_multiplier, offset);
+ }
+ //-----------------------------------------------------------------------------
+ void ControlBarSchemeManager::drawBackground( ICoord2D offset )
+ {
++	offset.x += TheDisplay->getUIOffsetX();
+ 	if(m_currentScheme)
+ 		m_currentScheme->drawBackground( m_multiplier, offset );
+ }
+@@ -1132,21 +1138,49 @@ void ControlBarSchemeManager::setControlBarSchemeByPlayerTemplate( const PlayerT
+ 	if(tempScheme)
+ 	{
+ 		// setup the multiplier value
+-		m_multiplier.x = TheDisplay->getWidth() / (Real)tempScheme->m_ScreenCreationRes.x;
++		m_multiplier.x = TheDisplay->getUIWidth() / (Real)tempScheme->m_ScreenCreationRes.x;
+ 		m_multiplier.y = TheDisplay->getHeight() / (Real)tempScheme->m_ScreenCreationRes.y;
+ 		m_currentScheme = tempScheme;
+ 	}
+ 	else
+ 	{
+ 		// well, we couldn't find
+-		m_currentScheme = findControlBarScheme("Default");
++		// Reforged @feature A side without its own scheme (new factions) uses its base side's scheme, then Default.
++		AsciiString baseSide = pt->getBaseSide();
++		if(useSmall)
++			baseSide.concat("Small");
++		m_currentScheme = findBestControlBarSchemeForSide(baseSide);
++		if(!m_currentScheme)
++			m_currentScheme = findControlBarScheme("Default");
+ 		DEBUG_LOG(("There's no ControlBarScheme with a side of %s", side.str()));
+ //		m_currentScheme = nullptr;
++		// Reforged @bugfix The fallback scheme never got its resolution multiplier (stayed 1, right only at 800x600).
++		if(m_currentScheme)
++		{
++			m_multiplier.x = TheDisplay->getUIWidth() / (Real)m_currentScheme->m_ScreenCreationRes.x;
++			m_multiplier.y = TheDisplay->getHeight() / (Real)m_currentScheme->m_ScreenCreationRes.y;
++		}
+ 	}
+ 	if(m_currentScheme)
+ 		m_currentScheme->init();
+ }
+ //-----------------------------------------------------------------------------
++// Reforged: the scheme for a side with the largest creation resolution, or nullptr
++ControlBarScheme *ControlBarSchemeManager::findBestControlBarSchemeForSide( const AsciiString& side )
++{
++	ControlBarScheme *best = nullptr;
++	if(side.isEmpty())
++		return nullptr;
++	for (ControlBarSchemeList::iterator it = m_schemeList.begin(); it != m_schemeList.end(); ++it)
++	{
++		ControlBarScheme *CBScheme = *it;
++		if(CBScheme && CBScheme->m_side.compareNoCase( side ) == 0
++			&& (!best || best->m_ScreenCreationRes.x < CBScheme->m_ScreenCreationRes.x))
++			best = CBScheme;
++	}
++	return best;
++}
++//-----------------------------------------------------------------------------
+ void ControlBarSchemeManager::setControlBarSchemeByPlayer(Player *p)
+ {
+ 	GameWindow *communicatorButton = TheWindowManager->winGetWindowFromId( nullptr, NAMEKEY("ControlBar.wnd:PopupCommunicator") );
+@@ -1200,16 +1234,25 @@ void ControlBarSchemeManager::setControlBarSchemeByPlayer(Player *p)
+ 	if(tempScheme)
+ 	{
+ 		// setup the multiplier value
+-		m_multiplier.x = TheDisplay->getWidth() / (Real)tempScheme->m_ScreenCreationRes.x;
++		m_multiplier.x = TheDisplay->getUIWidth() / (Real)tempScheme->m_ScreenCreationRes.x;
+ 		m_multiplier.y = TheDisplay->getHeight() / (Real)tempScheme->m_ScreenCreationRes.y;
+ 		m_currentScheme = tempScheme;
+ 	}
+ 	else
+ 	{
+ 		// well, we couldn't find
+-		m_currentScheme = findControlBarScheme("Default");
++		// Reforged @feature A side without its own scheme (new factions) uses its base side's scheme, then Default.
++		m_currentScheme = findBestControlBarSchemeForSide(p->getBaseSide());
++		if(!m_currentScheme)
++			m_currentScheme = findControlBarScheme("Default");
+ 		DEBUG_LOG(("There's no ControlBarScheme with a side of %s", side.str()));
+ //		m_currentScheme = nullptr;
++		// Reforged @bugfix The fallback scheme never got its resolution multiplier (stayed 1, right only at 800x600).
++		if(m_currentScheme)
++		{
++			m_multiplier.x = TheDisplay->getUIWidth() / (Real)m_currentScheme->m_ScreenCreationRes.x;
++			m_multiplier.y = TheDisplay->getHeight() / (Real)m_currentScheme->m_ScreenCreationRes.y;
++		}
+ 	}
+ 	if(m_currentScheme)
+ 		m_currentScheme->init();
+diff --git a/Core/GameEngine/Source/GameClient/GUI/GameWindowManagerScript.cpp b/Core/GameEngine/Source/GameClient/GUI/GameWindowManagerScript.cpp
+index 2b37cc9c3..f3e562551 100644
+--- a/Core/GameEngine/Source/GameClient/GUI/GameWindowManagerScript.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/GameWindowManagerScript.cpp
+@@ -558,11 +558,13 @@ static Bool parseScreenRect( const char *token, char *buffer,
+ 	// shrink or expand the screen region by the ratio of the current
+ 	// resolution divided by the creation resolution
+ 	//
+-	Real xScale = (Real)TheDisplay->getWidth() / (Real)createRes.x;
++	// Reforged @feature Widescreen UI: scale into the centered 4:3 UI area (see Display::getUIWidth).
++	Real xScale = (Real)TheDisplay->getUIWidth() / (Real)createRes.x;
+ 	Real yScale = (Real)TheDisplay->getHeight() / (Real)createRes.y;
+-	screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * xScale);
++	const Int xOffset = TheDisplay->getUIOffsetX();
++	screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * xScale) + xOffset;
+ 	screenRegion.lo.y = (Int)((Real)screenRegion.lo.y * yScale);
+-	screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * xScale);
++	screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * xScale) + xOffset;
+ 	screenRegion.hi.y = (Int)((Real)screenRegion.hi.y * yScale);
+ 
+ 	//
+diff --git a/Core/GameEngine/Source/GameClient/GUI/LoadScreen.cpp b/Core/GameEngine/Source/GameClient/GUI/LoadScreen.cpp
+index e97fe8e32..752856074 100644
+--- a/Core/GameEngine/Source/GameClient/GUI/LoadScreen.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/LoadScreen.cpp
+@@ -1294,6 +1294,13 @@ void MultiPlayerLoadScreen::init( GameInfo *game )
+ 			portrait = TheMappedImageCollection->findImageByName("SUFactionLogoLg_GLA");
+ 		else if (pt->getName() == "FactionChina")
+ 			portrait = TheMappedImageCollection->findImageByName("SNFactionLogoLg_China");
++		// Reforged @feature New factions without a general persona use their base side's logo.
++		else if (pt->getBaseSide() == "America")
++			portrait = TheMappedImageCollection->findImageByName("SAFactionLogoLg_US");
++		else if (pt->getBaseSide() == "GLA")
++			portrait = TheMappedImageCollection->findImageByName("SUFactionLogoLg_GLA");
++		else if (pt->getBaseSide() == "China")
++			portrait = TheMappedImageCollection->findImageByName("SNFactionLogoLg_China");
+ 		else
+ 			DEBUG_CRASH(("Unexpected player template"));
+ 
+@@ -1559,6 +1566,13 @@ GameSlot *lSlot = game->getSlot(game->getLocalSlotNum());
+ 			portrait = TheMappedImageCollection->findImageByName("SUFactionLogo144_GLA");
+ 		else if (pt->getName() == "FactionChina")
+ 			portrait = TheMappedImageCollection->findImageByName("SNFactionLogo144_China");
++		// Reforged @feature New factions without a general persona use their base side's logo.
++		else if (pt->getBaseSide() == "America")
++			portrait = TheMappedImageCollection->findImageByName("SAFactionLogo144_US");
++		else if (pt->getBaseSide() == "GLA")
++			portrait = TheMappedImageCollection->findImageByName("SUFactionLogo144_GLA");
++		else if (pt->getBaseSide() == "China")
++			portrait = TheMappedImageCollection->findImageByName("SNFactionLogo144_China");
+ 		else
+ 			DEBUG_CRASH(("Unexpected player template"));
+ 
+diff --git a/Core/GameEngine/Source/GameClient/GlobalLanguage.cpp b/Core/GameEngine/Source/GameClient/GlobalLanguage.cpp
+index a9bc586d4..8d9310b1f 100644
+--- a/Core/GameEngine/Source/GameClient/GlobalLanguage.cpp
++++ b/Core/GameEngine/Source/GameClient/GlobalLanguage.cpp
+@@ -214,7 +214,8 @@ Real GlobalLanguage::getResolutionFontSizeScale(ResolutionFontSizeMethod method,
+ 	{
+ 		// TheSuperHackers @info The original font scaling for this game.
+ 		// Useful for not breaking legacy Addons and Mods. Scales poorly with large resolutions.
+-		adjustFactor = TheDisplay->getWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
++		// Reforged @feature Widescreen UI: measure the centered 4:3 UI area so text matches the UI scale.
++		adjustFactor = TheDisplay->getUIWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
+ 		adjustFactor = 1.0f + (adjustFactor - 1.0f) * scaler;
+ 		if (adjustFactor > 2.0f)
+ 			adjustFactor = 2.0f;
+@@ -224,7 +225,8 @@ Real GlobalLanguage::getResolutionFontSizeScale(ResolutionFontSizeMethod method,
+ 	{
+ 		// TheSuperHackers @feature The original font scaling, but without ceiling.
+ 		// Useful for not changing the original look of the game. Scales alright with large resolutions.
+-		adjustFactor = TheDisplay->getWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
++		// Reforged @feature Widescreen UI: measure the centered 4:3 UI area so text matches the UI scale.
++		adjustFactor = TheDisplay->getUIWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
+ 		adjustFactor = 1.0f + (adjustFactor - 1.0f) * scaler;
+ 		break;
+ 	}
+diff --git a/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
+index f40eb60bc..55de53594 100644
+--- a/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
++++ b/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
+@@ -883,7 +883,8 @@ bool GameLogic::onNewGame(MAYBE_UNUSED GameMessage *msg)
+ 		if (maxFPS < 1 || maxFPS > 1000)
+ 			maxFPS = TheGlobalData->m_framesPerSecondLimit;
+ 		DEBUG_LOG(("Setting max FPS limit to %d FPS", maxFPS));
+-		TheFramePacer->setFramesPerSecondLimit(maxFPS);
++		// Reforged @feature The game speed setting drives the logic rate; rendering follows the display.
++		TheFramePacer->setGameSpeedFps(maxFPS);
+ 		TheWritableGlobalData->m_useFpsLimit = true;
+ 	}
+ 
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/GUI/Gadget/W3DHorizontalSlider.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/GUI/Gadget/W3DHorizontalSlider.cpp
+index 804b0c2b9..b6acfcc4e 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/GUI/Gadget/W3DHorizontalSlider.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/GUI/Gadget/W3DHorizontalSlider.cpp
+@@ -150,7 +150,8 @@ void W3DGadgetHorizontalSliderImageDraw( GameWindow *window,
+ 
+ 	SliderData *s = (SliderData *)window->winGetUserData();
+ 
+-	Real xMulti = INT_TO_REAL(TheDisplay->getWidth()) / DEFAULT_DISPLAY_WIDTH;
++	// Reforged @feature Widescreen UI: scale like the centered 4:3 UI area.
++	Real xMulti = INT_TO_REAL(TheDisplay->getUIWidth()) / DEFAULT_DISPLAY_WIDTH;
+ 
+ 	// figure out how many boxes we draw for this slider
+ 	Int numBoxes = 0;
+@@ -229,7 +230,8 @@ void W3DGadgetHorizontalSliderImageDrawB( GameWindow *window,
+ 
+ 	SliderData *s = (SliderData *)window->winGetUserData();
+ 
+-	Real xMulti = INT_TO_REAL(TheDisplay->getWidth()) / DEFAULT_DISPLAY_WIDTH;
++	// Reforged @feature Widescreen UI: scale like the centered 4:3 UI area.
++	Real xMulti = INT_TO_REAL(TheDisplay->getUIWidth()) / DEFAULT_DISPLAY_WIDTH;
+ 	Real yMulti = INT_TO_REAL(TheDisplay->getHeight()) / DEFAULT_DISPLAY_HEIGHT;
+ 	// get image offset
+ 	xOffset = instData->m_imageOffset.x;
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+index 95183f37b..e477bb063 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+@@ -221,6 +221,24 @@ void W3DView::setHeight(Int height)
+ 	m_lastScreenToTerrainValid = false;
+ }
+ 
++//-------------------------------------------------------------------------------------------------
++// Reforged @feature Hor+ widescreen. The horizontal FOV was fixed for every display shape, so a
++// display wider than 4:3 cropped the top and bottom of the view. Convert the 4:3 horizontal FOV
++// so that wider displays keep the 4:3 vertical FOV and see more to the sides instead. Displays
++// that are 4:3 or narrower are unchanged. The widening is capped at 16:9; wider displays crop
++// vertically beyond that, because the terrain draw area was only verified for up to 16:9.
++//-------------------------------------------------------------------------------------------------
++static Real getWidescreenHorizontalFov(Real horizontalFov4x3)
++{
++	const Real referenceWidth = (Real)TheDisplay->getHeight() * 4.0f / 3.0f;
++	const Real widthRatio = std::min((Real)TheDisplay->getWidth() / referenceWidth, (16.0f / 9.0f) / (4.0f / 3.0f));
++
++	if (widthRatio <= 1.0f)
++		return horizontalFov4x3;
++
++	return 2.0f * atan(tan(horizontalFov4x3 * 0.5f) * widthRatio);
++}
++
+ //-------------------------------------------------------------------------------------------------
+ /** Sets the width of the viewport, while maintaining original camera perspective. */
+ //-------------------------------------------------------------------------------------------------
+@@ -237,7 +255,7 @@ void W3DView::setWidth(Int width)
+ 
+ 	//we want to maintain the same scale, so we'll need to adjust the fov.
+ 	//default W3D fov for full-screen is 50 degrees.
+-	m_3DCamera->Set_View_Plane((Real)width/(Real)TheDisplay->getWidth()*DEG_TO_RADF(50.0f),-1);
++	m_3DCamera->Set_View_Plane((Real)width/(Real)TheDisplay->getWidth()*getWidescreenHorizontalFov(DEG_TO_RADF(50.0f)),-1);
+ 
+ 	m_cameraAreaConstraintsValid = false;
+ 	m_recalcCamera = true;
+@@ -832,7 +850,7 @@ void W3DView::setCameraTransform(const Matrix3D &transform)
+ 	m_lastScreenToTerrainValid = false;
+ 
+ #if defined(RTS_DEBUG)
+-	m_3DCamera->Set_View_Plane( m_FOV, -1 );
++	m_3DCamera->Set_View_Plane( getWidescreenHorizontalFov(m_FOV), -1 );
+ #endif
+ 
+ 	m_3DCamera->Set_Transform(transform);
+@@ -3726,6 +3744,31 @@ bool W3DView::getDesiredTerrainDrawSize(ICoord2D &dimensions) const
+ 
+ 	if (cameraPitch > ViewDefaultLowPitchRadians || !m_isUserControlled)
+ 	{
++		// Reforged @feature Farther zoom-out. The regular draw size covers the view up to about the
++		// original max camera height (310). Above that, the user camera uses the larger draw size, which
++		// covers up to about 590. Switching rebuilds the terrain buffers, so it switches back only once
++		// clearly below the threshold.
++		if (m_isUserControlled && TheTerrainRenderObject && TheTerrainRenderObject->getMap())
++		{
++			const Bool isLarge = TheTerrainRenderObject->getMap()->getDrawWidth() > WorldHeightMap::NORMAL_DRAW_WIDTH;
++			const Real threshold = isLarge ? 270.0f : 300.0f;
++			if (m_currentHeightAboveGround > threshold)
++			{
++				dimensions.x = WorldHeightMap::LOW_ANGLE_DRAW_WIDTH;
++				dimensions.y = WorldHeightMap::LOW_ANGLE_DRAW_HEIGHT;
++				return true;
++			}
++		}
++
++		// Reforged @feature Scripted cameras (shell map, cinematics) were framed for the 4:3 view. On wider displays
++		// the Hor+ view shows more to the sides than the regular draw size covers, so use the larger one.
++		if (!m_isUserControlled && TheDisplay->getUIOffsetX() > 0)
++		{
++			dimensions.x = WorldHeightMap::LOW_ANGLE_DRAW_WIDTH;
++			dimensions.y = WorldHeightMap::LOW_ANGLE_DRAW_HEIGHT;
++			return true;
++		}
++
+ 		// TheSuperHackers @info The scripted camera always uses the regular draw sizes
+ 		// and uses terrain oversize if it needs to enlarge.
+ 		dimensions.x = WorldHeightMap::NORMAL_DRAW_WIDTH;
+diff --git a/GeneralsMD/Code/GameEngine/Include/Common/GlobalData.h b/GeneralsMD/Code/GameEngine/Include/Common/GlobalData.h
+index bbdc79e61..d3a201beb 100644
+--- a/GeneralsMD/Code/GameEngine/Include/Common/GlobalData.h
++++ b/GeneralsMD/Code/GameEngine/Include/Common/GlobalData.h
+@@ -356,6 +356,10 @@ public:
+ 	AsciiString m_pendingFile;				///< If this is specified, use this map at the next game start
+ 	AsciiString m_loadSaveGame;				///< If this is specified, load a save game file from the command-line
+ 	AsciiString m_loadReplayGame;			///< If this is specified, play a replay file from the command-line
++	AsciiString m_testSkirmishFaction;		///< Reforged: -skirmishTest player template for the human player
++	AsciiString m_testSkirmishAIFaction;	///< Reforged: -skirmishTest player template for the AI opponent
++	AsciiString m_testSkirmishMap;			///< Reforged: -skirmishTest map (empty: last skirmish map)
++	Bool m_testSkirmishSelectDozer;			///< Reforged: select the local player's first starting unit (test captures)
+ 
+ 	std::vector<AsciiString> m_simulateReplays; ///< If not empty, simulate this list of replays and exit.
+ 	Int m_simulateReplayJobs; ///< Maximum number of processes to use for simulation, or SIMULATE_REPLAYS_SEQUENTIAL for sequential simulation
+diff --git a/GeneralsMD/Code/GameEngine/Include/Common/Player.h b/GeneralsMD/Code/GameEngine/Include/Common/Player.h
+index d8c7940bb..9327d080c 100644
+--- a/GeneralsMD/Code/GameEngine/Include/Common/Player.h
++++ b/GeneralsMD/Code/GameEngine/Include/Common/Player.h
+@@ -563,6 +563,7 @@ public:
+ 
+ 	/// All of our units are new spied upon; they sight for the given enemy
+ 	void setUnitsVisionSpied( Bool setting, KindOfMaskType whichUnits, PlayerIndex byWhom );
++	void applyUnitsVisionSpied( Object *obj, Bool setting ); ///< Reforged: apply active spy grants to an object joining or leaving this player
+ 
+ 	/// Destroy all of the teams for this player, causing him to DIE.
+ 	void killPlayer();
+@@ -755,6 +756,15 @@ private:
+ 	Bool												m_radarDisabled;							///< The radar is disabled regardless of the number of radar objects
+ 	Int													m_bombardBattlePlans;					///< Number of strategy centers with active bombardment plan
+ 	Int													m_holdTheLineBattlePlans;			///< Number of strategy centers with active hold the line plan
++
++	// Reforged @bugfix Spy vision on our units (Satellite Hack etc.) is remembered here, so units we get after it
++	// started are spied on too. Not saved: after loading a game only units that existed at the save are spied on.
++	struct VisionSpiedGrant
++	{
++		KindOfMaskType whichUnits;
++		PlayerIndex byWhom;
++	};
++	std::list<VisionSpiedGrant>	m_visionSpiedGrants;
+ 	Int													m_searchAndDestroyBattlePlans;///< Number of strategy centers with active search and destroy plan
+ 	BattlePlanBonuses*					m_battlePlanBonuses;
+ 	UpgradeMaskType							m_upgradesInProgress;					///< Bit field of in Production status upgrades
+diff --git a/GeneralsMD/Code/GameEngine/Include/GameLogic/AI.h b/GeneralsMD/Code/GameEngine/Include/GameLogic/AI.h
+index a963e36da..50dd28e84 100644
+--- a/GeneralsMD/Code/GameEngine/Include/GameLogic/AI.h
++++ b/GeneralsMD/Code/GameEngine/Include/GameLogic/AI.h
+@@ -979,6 +979,8 @@ public:
+ 	Bool isMember( Object *obj );						///< return true if object is in this group
+ 
+ 	Real getSpeed();									///< return the speed of the group's slowest member
++	Bool isMovingAbreast() const { return m_moveAbreast; }	///< Reforged: last group move was an abreast move
++	Real getAbreastSpeed( Bool infantry ) const { return infantry ? m_abreastSpeedInfantry : m_abreastSpeedVehicle; }	///< Reforged: pace of an abreast move
+ 	Bool getCenter( Coord3D *center );				///< compute centroid of group
+ 	Bool getMinMaxAndCenter( Coord2D *min, Coord2D *max, Coord3D *center );
+ 	void computeIndividualDestination( Coord3D *dest, const Coord3D *groupDest,
+@@ -1020,6 +1022,7 @@ protected:
+ 	Bool friend_moveInfantryToPos( const Coord3D *pos, CommandSourceType cmdSource );
+ 	Bool friend_moveVehicleToPos( const Coord3D *pos, CommandSourceType cmdSource );
+ 	void friend_moveFormationToPos( const Coord3D *pos, CommandSourceType cmdSource );
++	Bool friend_moveAbreastToPos( const Coord3D *pos, CommandSourceType cmdSource, Bool infantry );
+ 	Bool friend_computeGroundPath( const Coord3D *pos, CommandSourceType cmdSource );
+ 
+ private:
+@@ -1049,5 +1052,9 @@ private:
+ 	UnsignedInt m_id;												///< the unique ID of this group
+ 	Path *m_groundPath;											///< Group ground path.
+ 
++	Bool m_moveAbreast;											///< Reforged: units follow the abreast pace below
++	Real m_abreastSpeedInfantry;						///< Reforged: slowest infantry speed of the abreast move
++	Real m_abreastSpeedVehicle;							///< Reforged: slowest vehicle speed of the abreast move
++
+ 	mutable VecObjectID	m_lastRequestedIDList;			///< this is used so we can return by reference, saving a copy
+ };
+diff --git a/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp b/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp
+index 5d7b450e1..382de5fac 100644
+--- a/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp
+@@ -666,7 +666,8 @@ void GameEngine::init()
+ 
+ 		TheSubsystemList->postProcessLoadAll();
+ 
+-		TheFramePacer->setFramesPerSecondLimit(TheGlobalData->m_framesPerSecondLimit);
++		// Reforged @feature Smooth rendering: GameData's fps limit is the game speed (see FramePacer::setGameSpeedFps).
++		TheFramePacer->setGameSpeedFps(TheGlobalData->m_framesPerSecondLimit);
+ 
+ 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_musicOn, AudioAffect_Music);
+ 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_soundsOn, AudioAffect_Sound);
+diff --git a/GeneralsMD/Code/GameEngine/Source/Common/GameLOD.cpp b/GeneralsMD/Code/GameEngine/Source/Common/GameLOD.cpp
+index 457811a0d..5a99dc8d3 100644
+--- a/GeneralsMD/Code/GameEngine/Source/Common/GameLOD.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/Common/GameLOD.cpp
+@@ -274,15 +274,17 @@ void GameLODManager::initStaticLODLevels()
+ 	veryhigh.m_sampleCount2D = 6;
+ 	veryhigh.m_sampleCount3D = 24;
+ 	veryhigh.m_streamCount = 2;
+-	veryhigh.m_maxParticleCount = 5000;
++	// Reforged @tweak More particles, and tank tracks that stay sharp longer and last twice as long.
++	// MaxTankTrackEdges must stay <= MAX_TRACK_EDGE_COUNT (100), the size of the per-track edge array.
++	veryhigh.m_maxParticleCount = 8000;
+ 	veryhigh.m_useShadowVolumes = TRUE;
+ 	veryhigh.m_useShadowDecals = TRUE;
+ 	veryhigh.m_useCloudMap = TRUE;
+ 	veryhigh.m_useLightMap = TRUE;
+ 	veryhigh.m_showSoftWaterEdge = TRUE;
+ 	veryhigh.m_maxTankTrackEdges = 100;
+-	veryhigh.m_maxTankTrackOpaqueEdges = 25;
+-	veryhigh.m_maxTankTrackFadeDelay = 60000;
++	veryhigh.m_maxTankTrackOpaqueEdges = 60;
++	veryhigh.m_maxTankTrackFadeDelay = 120000;
+ 	veryhigh.m_useBuildupScaffolds = TRUE;
+ 	veryhigh.m_useTreeSway = TRUE;
+ 	veryhigh.m_useEmissiveNightMaterials = TRUE;
+diff --git a/GeneralsMD/Code/GameEngine/Source/Common/GlobalData.cpp b/GeneralsMD/Code/GameEngine/Source/Common/GlobalData.cpp
+index 2ca685137..fc80e8128 100644
+--- a/GeneralsMD/Code/GameEngine/Source/Common/GlobalData.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/Common/GlobalData.cpp
+@@ -637,6 +637,7 @@ GlobalData::GlobalData()
+ 	m_framesPerSecondLimit = 0;
+ 	m_chipSetType = 0;
+ 	m_headless = FALSE;
++	m_testSkirmishSelectDozer = FALSE;
+ 	m_windowed = 0;
+ 	m_xResolution = DEFAULT_DISPLAY_WIDTH;
+ 	m_yResolution = DEFAULT_DISPLAY_HEIGHT;
+diff --git a/GeneralsMD/Code/GameEngine/Source/Common/RTS/Player.cpp b/GeneralsMD/Code/GameEngine/Source/Common/RTS/Player.cpp
+index 832909462..725722946 100644
+--- a/GeneralsMD/Code/GameEngine/Source/Common/RTS/Player.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/Common/RTS/Player.cpp
+@@ -370,6 +370,8 @@ void Player::init(const PlayerTemplate* pt)
+ 	deleteInstance(m_battlePlanBonuses);
+ 	m_battlePlanBonuses = nullptr;
+ 
++	m_visionSpiedGrants.clear();
++
+ 	deleteUpgradeList();
+ 
+ 	m_energy.init(this);
+@@ -1037,6 +1039,13 @@ void Player::becomingTeamMember(Object *obj, Bool yes)
+ 		}
+ 	}
+ 
++	// Reforged @bugfix BUG-030 Active spy vision on this player follows units that join or leave it (capture).
++	// New objects are handled in Object::initObject, once their modules exist; destroyed objects need nothing.
++	if( obj->areModulesReady() && !obj->isDestroyed() )
++	{
++		applyUnitsVisionSpied( obj, yes );
++	}
++
+ 	if( getNumBattlePlansActive() > 0 && obj->areModulesReady() )
+ 	{
+ 		if( yes )
+@@ -3976,6 +3985,37 @@ void Player::setUnitsVisionSpied( Bool setting, KindOfMaskType whichUnits, Playe
+ 	data.byWhom = byWhom;
+ 	// Being spied is now a property of the unit, not us, since we can spy only a portion of the enemy.
+ 	iterateObjects( iterator_setUnitsVisionSpied, &data );
++
++	// Reforged @bugfix BUG-030 Remember the grant so that units we get later are spied on as well
++	// (e.g. Satellite Hack I revealing Command Centers built after the upgrade). See applyUnitsVisionSpied.
++	if (setting)
++	{
++		VisionSpiedGrant grant;
++		grant.whichUnits = whichUnits;
++		grant.byWhom = byWhom;
++		m_visionSpiedGrants.push_back(grant);
++	}
++	else
++	{
++		for (std::list<VisionSpiedGrant>::iterator it = m_visionSpiedGrants.begin(); it != m_visionSpiedGrants.end(); ++it)
++		{
++			if (it->byWhom == byWhom && it->whichUnits == whichUnits)
++			{
++				m_visionSpiedGrants.erase(it);
++				break;
++			}
++		}
++	}
++}
++
++// ------------------------------------------------------------------------------------------------
++void Player::applyUnitsVisionSpied( Object *obj, Bool setting )
++{
++	for (std::list<VisionSpiedGrant>::const_iterator it = m_visionSpiedGrants.begin(); it != m_visionSpiedGrants.end(); ++it)
++	{
++		if (obj->isAnyKindOf(it->whichUnits))
++			obj->setVisionSpied(setting, it->byWhom);
++	}
+ }
+ 
+ // ------------------------------------------------------------------------------------------------
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/PopupPlayerInfo.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/PopupPlayerInfo.cpp
+index 5b71b4b81..a1546dd11 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/PopupPlayerInfo.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/PopupPlayerInfo.cpp
+@@ -469,7 +469,8 @@ void ResetBattleHonorInsertion()
+ }
+ void InsertBattleHonor(GameWindow *list, const Image *image, Bool enabled, Int itemData, Int& row, Int& column, UnicodeString text = UnicodeString::TheEmptyString, Int extra = 0)
+ {
+-	Int width = MAX_BATTLE_HONOR_IMAGE_WIDTH * (TheDisplay->getWidth() / (Real)DEFAULT_DISPLAY_WIDTH);
++	// Reforged @feature Widescreen UI: scale like the centered 4:3 UI area.
++	Int width = MAX_BATTLE_HONOR_IMAGE_WIDTH * (TheDisplay->getUIWidth() / (Real)DEFAULT_DISPLAY_WIDTH);
+ 	Int height = MAX_BATTLE_HONOR_IMAGE_HEIGHT * (TheDisplay->getHeight() / (Real)DEFAULT_DISPLAY_HEIGHT);
+ 
+ 	static Int enabledColor = 0xFFFFFFFF;
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
+index 46eccc8b1..f3e7415c8 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
+@@ -461,6 +461,74 @@ void reallyDoStart()
+ 	}
+ }
+ 
++//-------------------------------------------------------------------------------------------------
++// Reforged @feature Developer quick start (-skirmishTest <PlayerTemplate> [<AIPlayerTemplate>]): a skirmish
++// against one easy AI on the player's last skirmish map, set up like the skirmish menu does it.
++//-------------------------------------------------------------------------------------------------
++static Int findPlayerTemplateIndex( const AsciiString& name )
++{
++	for (Int i = 0; i < ThePlayerTemplateStore->getPlayerTemplateCount(); ++i)
++	{
++		const PlayerTemplate *pt = ThePlayerTemplateStore->getNthPlayerTemplate(i);
++		if (pt && pt->getName().compareNoCase(name) == 0)
++			return i;
++	}
++	return PLAYERTEMPLATE_RANDOM;
++}
++
++void StartTestSkirmish()
++{
++	const AsciiString faction = TheGlobalData->m_testSkirmishFaction;
++	const AsciiString aiFaction = TheGlobalData->m_testSkirmishAIFaction;
++	const AsciiString map = TheGlobalData->m_testSkirmishMap;
++	TheWritableGlobalData->m_testSkirmishFaction.clear();
++	TheWritableGlobalData->m_testSkirmishAIFaction.clear();
++	TheWritableGlobalData->m_testSkirmishMap.clear();
++
++	if (TheGameLogic->isInGame())
++		TheGameLogic->clearGameData(FALSE);
++
++	if (TheSkirmishGameInfo == nullptr)
++		TheSkirmishGameInfo = NEW SkirmishGameInfo;
++	TheSkirmishGameInfo->init();
++	TheSkirmishGameInfo->clearSlotList();
++	TheSkirmishGameInfo->reset();
++	TheSkirmishGameInfo->setLocalIP(TheSkirmishGameInfo->getSlot(0)->getIP());
++	TheSkirmishGameInfo->enterGame();
++
++	SkirmishPreferences prefs;
++	GameSlot player;
++	player.setName(prefs.getUserName());
++	player.setState(SLOT_PLAYER, prefs.getUserName());
++	player.setColor(prefs.getPreferredColor());
++	player.setPlayerTemplate(findPlayerTemplateIndex(faction));
++	TheSkirmishGameInfo->setSlot(0, player);
++
++	GameSlot ai;
++	ai.setState(SLOT_EASY_AI);
++	ai.setPlayerTemplate(aiFaction.isEmpty() ? PLAYERTEMPLATE_RANDOM : findPlayerTemplateIndex(aiFaction));
++	TheSkirmishGameInfo->setSlot(1, ai);
++
++	TheSkirmishGameInfo->setSeed(GetTickCount());
++	TheSkirmishGameInfo->setStartingCash(prefs.getStartingCash());
++	TheSkirmishGameInfo->setSuperweaponRestriction(prefs.getSuperweaponRestricted() ? 1 : 0);
++	TheSkirmishGameInfo->setMap(map.isEmpty() ? prefs.getPreferredMap() : map);
++	const MapMetaData *md = TheMapCache->findMap(TheSkirmishGameInfo->getMap());
++	TheSkirmishGameInfo->setMapCRC(md ? md->m_CRC : 0);
++	TheSkirmishGameInfo->setMapSize(md ? md->m_filesize : 0);
++
++	TheWritableGlobalData->m_mapName = TheSkirmishGameInfo->getMap();
++	TheWritableGlobalData->m_testSkirmishSelectDozer = TRUE;
++	TheSkirmishGameInfo->startGame(0);
++	InitRandom(TheSkirmishGameInfo->getSeed());
++
++	GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_NEW_GAME );
++	msg->appendIntegerArgument(GAME_SKIRMISH);
++	msg->appendIntegerArgument(DIFFICULTY_NORMAL);
++	msg->appendIntegerArgument(0);
++	msg->appendIntegerArgument(TheGlobalData->m_framesPerSecondLimit);
++}
++
+ Bool sandboxOk = FALSE;
+ static void startPressed()
+ {
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp
+index 983845c6e..0f92c28db 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp
+@@ -547,6 +547,11 @@ void GameClient::update()
+ 			{
+ 				TheRecorder->loadQueuedReplay();
+ 			}
++			else if (TheGlobalData->m_testSkirmishFaction.isNotEmpty())
++			{
++				extern void StartTestSkirmish();
++				StartTestSkirmish();
++			}
+ 		}
+ 	}
+ 
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp
+index b37408e6a..bc5fa6d4f 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp
+@@ -4456,8 +4456,9 @@ void InGameUI::militarySubtitle( const AsciiString& label, Int duration )
+ 	disableTooltipsUntil(messageTimeout);
+ 
+ 	// calculate where this screen position should be since the position being passed in is based off 8x6
++	// Reforged @feature Widescreen UI: map into the centered 4:3 UI area.
+ 	Coord2D multiplier;
+-	multiplier.x = (Real)TheDisplay->getWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
++	multiplier.x = (Real)TheDisplay->getUIWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
+ 	multiplier.y = (Real)TheDisplay->getHeight() / (Real)DEFAULT_DISPLAY_HEIGHT;
+ 
+ 	// lets bring out the data structure!
+@@ -4467,7 +4468,7 @@ void InGameUI::militarySubtitle( const AsciiString& label, Int duration )
+ 	m_militarySubtitle->blockDrawn = TRUE;
+ 	m_militarySubtitle->blockBeginFrame = currLogicFrame;
+ 	m_militarySubtitle->lifetime = messageTimeout;
+-	m_militarySubtitle->blockPos.x =  m_militarySubtitle->position.x = m_militaryCaptionPosition.x * multiplier.x;
++	m_militarySubtitle->blockPos.x =  m_militarySubtitle->position.x = m_militaryCaptionPosition.x * multiplier.x + TheDisplay->getUIOffsetX();
+ 	m_militarySubtitle->blockPos.y =  m_militarySubtitle->position.y = m_militaryCaptionPosition.y * multiplier.y;
+ 	m_militarySubtitle->incrementOnFrame = currLogicFrame + (Int)(((Real)LOGICFRAMES_PER_SECOND * TheGlobalLanguageData->m_militaryCaptionDelayMS)/1000.0f);
+ 	m_militarySubtitle->index = 0;
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIGroup.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIGroup.cpp
+index 2e08dea4d..4ddfa6261 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIGroup.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIGroup.cpp
+@@ -74,6 +74,9 @@ AIGroup::AIGroup()
+ 	m_groundPath = nullptr;
+ 	m_speed = 0.0f;
+ 	m_dirty = false;
++	m_moveAbreast = false;
++	m_abreastSpeedInfantry = FAST_AS_POSSIBLE;
++	m_abreastSpeedVehicle = FAST_AS_POSSIBLE;
+ 	m_id = TheAI->getNextGroupID();
+ 	m_memberListSize = 0;
+ 	m_memberList.clear();
+@@ -507,6 +510,54 @@ Bool AIGroup::isEmpty() const
+ 	return m_memberList.empty();
+ }
+ 
++//-------------------------------------------------------------------------------------------------
++// Reforged @feature Formations (Ctrl+F) turn to face the direction they move in. Formation offsets
++// are stored relative to the formation's facing when it was created: x is forward, y is left.
++//-------------------------------------------------------------------------------------------------
++static Coord2D formationOffsetToWorld( const Coord2D &local, const Coord2D &facing )
++{
++	Coord2D world;
++	world.x = local.x * facing.x - local.y * facing.y;
++	world.y = local.x * facing.y + local.y * facing.x;
++	return world;
++}
++
++/// Average facing of the members, or +x if they face every way.
++static Coord2D getMembersFacing( const std::list<Object *> &members )
++{
++	Coord2D facing;
++	facing.x = 0.0f;
++	facing.y = 0.0f;
++	for (std::list<Object *>::const_iterator i = members.begin(); i != members.end(); ++i)
++	{
++		const Real angle = (*i)->getOrientation();
++		facing.x += Cos( angle );
++		facing.y += Sin( angle );
++	}
++	if (facing.length() < 0.01f)
++	{
++		facing.x = 1.0f;
++		facing.y = 0.0f;
++	}
++	else
++	{
++		facing.normalize();
++	}
++	return facing;
++}
++
++/// Direction of a move, or the members' facing for a very short move.
++static Coord2D getMoveFacing( const Coord3D &from, const Coord3D &to, const std::list<Object *> &members )
++{
++	Coord2D facing;
++	facing.x = to.x - from.x;
++	facing.y = to.y - from.y;
++	if (facing.length() < PATHFIND_CELL_SIZE_F)
++		return getMembersFacing( members );
++	facing.normalize();
++	return facing;
++}
++
+ /**
+  * Given a destination location, compute the destination position for
+  * this object such that it keeps its relative position with the group.
+@@ -520,6 +571,7 @@ void AIGroup::computeIndividualDestination( Coord3D *dest, const Coord3D *groupD
+ 	const Coord3D *pos = obj->getPosition();
+ 	if (isFormation) {
+ 		obj->getFormationOffset(&v);
++		v = formationOffsetToWorld( v, getMoveFacing( *center, *groupDest, m_memberList ) );
+ 	}	else {
+ 		v.x = pos->x - center->x;
+ 		v.y = pos->y - center->y;
+@@ -1142,11 +1194,16 @@ void AIGroup::friend_moveFormationToPos( const Coord3D *pos, CommandSourceType c
+ 			theUnit->setFormationOffset(offset);
+ 		}
+ 		theUnit->getFormationOffset(&offset);
++		// Reforged @feature The formation turns to face along each leg of the path.
++		const Coord2D localOffset = offset;
++		Coord3D prevNodePos = center;
+ 		if (startNode) {
+ 			std::vector<Coord3D> path;
+ 			PathNode *node = startNode;
+ 			while (node) {
+ 				Coord3D dest = *node->getPosition();
++				offset = formationOffsetToWorld( localOffset, getMoveFacing( prevNodePos, dest, m_memberList ) );
++				prevNodePos = dest;
+ 				dest.x += offset.x;
+ 				dest.y += offset.y;
+ 
+@@ -1156,6 +1213,7 @@ void AIGroup::friend_moveFormationToPos( const Coord3D *pos, CommandSourceType c
+ 			}
+ 
+ 			Coord3D dest = endPoint;
++			offset = formationOffsetToWorld( localOffset, getMoveFacing( prevNodePos, endPoint, m_memberList ) );
+ 			dest.x += offset.x;
+ 			dest.y += offset.y;
+ 
+@@ -1165,6 +1223,7 @@ void AIGroup::friend_moveFormationToPos( const Coord3D *pos, CommandSourceType c
+ 			ai->aiFollowPath( &path, nullptr, cmdSource );
+ 		}	else {
+ 			Coord3D dest = endPoint;
++			offset = formationOffsetToWorld( localOffset, getMoveFacing( prevNodePos, endPoint, m_memberList ) );
+ 			dest.x += offset.x;
+ 			dest.y += offset.y;
+ 			ai->aiMoveToPosition( &dest, cmdSource );
+@@ -1172,6 +1231,220 @@ void AIGroup::friend_moveFormationToPos( const Coord3D *pos, CommandSourceType c
+ 
+ 	}
+ }
++//-------------------------------------------------------------------------------------------------
++// Reforged @feature Move a group of ground units abreast, instead of in the original 2 lane
++// (vehicles) or 3 lane (infantry) column that strings out into single file. The units form a
++// block facing the move direction, up to 5 (vehicles) or 6 (infantry) lanes wide, and each one
++// follows the group path at its own lateral offset. Where the ground is too narrow for a lane, the
++// unit pulls in towards the centre line. Units keep the pace of the slowest unit of their kind (see
++// AIFollowPathState::onEnter), so the block stays together. Returns false to fall back to the
++// original movement.
++//-------------------------------------------------------------------------------------------------
++namespace
++{
++	struct AbreastUnit
++	{
++		Object *obj;
++		Real forward;		///< distance ahead of the group centre along the move direction
++		Real lateral;		///< distance left of the group centre
++		Real laneOffset;	///< assigned lane, as distance left of the path
++		Int row;			///< assigned row, 0 at the front
++	};
++}
++
++Bool AIGroup::friend_moveAbreastToPos( const Coord3D *pos, CommandSourceType cmdSource, Bool infantry )
++{
++	if (m_groundPath == nullptr)
++		return false;
++
++	Coord3D center;
++	if (!getCenter( &center ))
++		return false;
++
++	// Waypoints of the group path after its start (the group centre).
++	const Coord3D startPoint = *m_groundPath->getFirstNode()->getPosition();
++	std::vector<Coord3D> waypoints;
++	for (PathNode *node = m_groundPath->getFirstNode()->getNextOptimized(); node; node = node->getNextOptimized())
++		waypoints.push_back(*node->getPosition());
++	if (waypoints.empty())
++		return false;
++
++	Coord2D forwardDir;
++	forwardDir.x = waypoints.front().x - startPoint.x;
++	forwardDir.y = waypoints.front().y - startPoint.y;
++	if (forwardDir.length() < 1.0f)
++		return false;
++	forwardDir.normalize();
++
++	std::vector<AbreastUnit> units;
++	Real maxRadius = 0.0f;
++	Real slowestSpeed = FAST_AS_POSSIBLE;
++	PlayerType controllingPlayerType = PLAYER_COMPUTER;
++	for (std::list<Object *>::iterator i = m_memberList.begin(); i != m_memberList.end(); ++i)
++	{
++		Object *obj = *i;
++		if (obj->isDisabledByType( DISABLED_HELD ))
++			continue;
++		AIUpdateInterface *ai = obj->getAIUpdateInterface();
++		if (ai == nullptr)
++			continue;
++		if (infantry)
++		{
++			if (!obj->isKindOf( KINDOF_INFANTRY ))
++				continue;
++			if (obj->isKindOf( KINDOF_MOB_NEXUS ))
++				return false; // the mob nexus needs its far-away goal, as in friend_moveInfantryToPos
++		}
++		else
++		{
++			// Cliff jumpers get individual orders in groupMoveToPosition, as with the column move.
++			if (!obj->isKindOf( KINDOF_VEHICLE ) || !ai->isDoingGroundMovement() || obj->isKindOf( KINDOF_CLIFF_JUMPER ))
++				continue;
++		}
++		if (obj->getControllingPlayer())
++			controllingPlayerType = obj->getControllingPlayer()->getPlayerType();
++
++		const Real speed = ai->getCurLocomotorSpeed();
++		if (speed < slowestSpeed && IS_CONDITION_BETTER( obj->getBodyModule()->getDamageState(), TheGlobalData->m_movementPenaltyDamageState ))
++			slowestSpeed = speed;
++		maxRadius = std::max(maxRadius, obj->getGeometryInfo().getMajorRadius());
++
++		// Units that move at the back of a group (artillery etc.) are sorted behind the others.
++		Real priorityAdjust = 0.0f;
++		if (ai->getCurLocomotor())
++		{
++			const LocomotorPriority movePriority = ai->getCurLocomotor()->getMovePriority();
++			if (movePriority == LOCO_MOVES_MIDDLE)
++				priorityAdjust = -100*PATHFIND_CELL_SIZE_F;
++			else if (movePriority == LOCO_MOVES_BACK)
++				priorityAdjust = -200*PATHFIND_CELL_SIZE_F;
++		}
++
++		const Real dx = obj->getPosition()->x - center.x;
++		const Real dy = obj->getPosition()->y - center.y;
++		AbreastUnit unit;
++		unit.obj = obj;
++		unit.forward = dx*forwardDir.x + dy*forwardDir.y + priorityAdjust;
++		unit.lateral = -dx*forwardDir.y + dy*forwardDir.x;
++		unit.laneOffset = 0.0f;
++		unit.row = 0;
++		units.push_back(unit);
++	}
++
++	const Int minUnits = infantry ? TheAI->getAiData()->m_minInfantryForGroup : TheAI->getAiData()->m_minVehiclesForGroup;
++	if ((Int)units.size() < minUnits)
++		return false;
++
++	// Lay out the block: the front-most units form the front row, and each row keeps the units'
++	// current left-to-right order so paths don't cross. A partial last row is centred.
++	const Int maxLanes = infantry ? 6 : 5;
++	const Real minSpacing = (infantry ? 1.5f : 2.5f) * PATHFIND_CELL_SIZE_F;
++	const Real spacing = std::max(minSpacing, 2.0f*maxRadius + 0.5f*PATHFIND_CELL_SIZE_F);
++	const Int lanes = std::min((Int)units.size(), maxLanes);
++
++	std::sort(units.begin(), units.end(), [](const AbreastUnit &a, const AbreastUnit &b) {
++		if (a.forward != b.forward)
++			return a.forward > b.forward;
++		return a.obj->getID() < b.obj->getID();
++	});
++	for (size_t rowStart = 0; rowStart < units.size(); rowStart += lanes)
++	{
++		const size_t rowEnd = std::min(rowStart + (size_t)lanes, units.size());
++		std::sort(units.begin() + rowStart, units.begin() + rowEnd, [](const AbreastUnit &a, const AbreastUnit &b) {
++			if (a.lateral != b.lateral)
++				return a.lateral < b.lateral;
++			return a.obj->getID() < b.obj->getID();
++		});
++		const Real rowCenter = 0.5f * (Real)(rowEnd - rowStart - 1);
++		for (size_t k = rowStart; k < rowEnd; ++k)
++		{
++			units[k].laneOffset = ((Real)(k - rowStart) - rowCenter) * spacing;
++			units[k].row = (Int)rowStart / lanes;
++		}
++	}
++
++	// The block ends with its front row on the destination, facing the final path direction.
++	const Coord3D endPoint = *m_groundPath->getLastNode()->getPosition();
++	const Coord3D beforeEnd = waypoints.size() >= 2 ? waypoints[waypoints.size()-2] : startPoint;
++	Coord2D endDir;
++	endDir.x = endPoint.x - beforeEnd.x;
++	endDir.y = endPoint.y - beforeEnd.y;
++	if (endDir.length() < 1.0f)
++		endDir = forwardDir;
++	else
++		endDir.normalize();
++	const PathfindLayerEnum layer = TheTerrainLogic->getLayerForDestination(pos);
++
++	for (std::vector<AbreastUnit>::iterator it = units.begin(); it != units.end(); ++it)
++	{
++		Object *theUnit = it->obj;
++		AIUpdateInterface *ai = theUnit->getAIUpdateInterface();
++		const LocomotorSurfaceTypeMask surfaces = ai->getLocomotorSet().getValidSurfaces();
++		TheAI->pathfinder()->removeGoal(theUnit);
++
++		std::vector<Coord3D> path;
++		Coord3D prevPos = *theUnit->getPosition();
++		for (size_t w = 0; w + 1 < waypoints.size(); ++w)
++		{
++			const Coord3D &before = (w == 0) ? startPoint : waypoints[w-1];
++			const Coord3D &after = waypoints[w+1];
++			Coord2D dir;
++			dir.x = after.x - before.x;
++			dir.y = after.y - before.y;
++			if (dir.length() < 1.0f)
++				continue;
++			dir.normalize();
++
++			// Use the full lane offset where possible, otherwise pull in towards the centre line.
++			const Real offsets[3] = { it->laneOffset, 0.5f*it->laneOffset, 0.0f };
++			Coord3D dest = waypoints[w];
++			for (Int o = 0; o < 3; ++o)
++			{
++				dest = waypoints[w];
++				dest.x += -dir.y * offsets[o];
++				dest.y += dir.x * offsets[o];
++				if (o == 2 || TheAI->pathfinder()->isLinePassable(theUnit, surfaces, theUnit->getLayer(), prevPos, dest, false, true))
++					break;
++			}
++			clampToMap(&dest, controllingPlayerType);
++
++			// Skip waypoints that would send the unit backwards.
++			if ((dest.x - prevPos.x)*dir.x + (dest.y - prevPos.y)*dir.y > 0.0f)
++			{
++				path.push_back(dest);
++				prevPos = dest;
++			}
++		}
++
++		Coord3D dest = *pos;
++		dest.x += -endDir.y * it->laneOffset - endDir.x * it->row * spacing;
++		dest.y += endDir.x * it->laneOffset - endDir.y * it->row * spacing;
++		dest.z = TheTerrainLogic->getLayerHeight( dest.x, dest.y, layer );
++
++		// Drop waypoints at or beyond the final slot so the unit doesn't overshoot and turn back.
++		while (!path.empty())
++		{
++			const Coord3D &last = path.back();
++			if ((dest.x - last.x)*endDir.x + (dest.y - last.y)*endDir.y <= 0.0f)
++				path.pop_back();
++			else
++				break;
++		}
++
++		clampToMap(&dest, controllingPlayerType);
++		TheAI->pathfinder()->adjustDestination(theUnit, ai->getLocomotorSet(), &dest, nullptr);
++		TheAI->pathfinder()->updateGoal(theUnit, &dest, LAYER_GROUND);
++		path.push_back(dest);
++		ai->aiFollowPath( &path, nullptr, cmdSource );
++	}
++
++	if (infantry)
++		m_abreastSpeedInfantry = slowestSpeed;
++	else
++		m_abreastSpeedVehicle = slowestSpeed;
++	return true;
++}
++
+ //-------------------------------------------------------------------------------------------------
+ // Internal function for moving a group of vehicles as a column.
+ //
+@@ -1610,10 +1883,21 @@ void AIGroup::groupMoveToPosition( const Coord3D *p_posIn, Bool addWaypoint, Com
+   }
+ 
+ 
++	// Reforged @feature Player group moves go abreast instead of in a column (friend_moveAbreastToPos).
++	// The AI keeps the original column movement.
++	m_moveAbreast = false;
++	m_abreastSpeedInfantry = FAST_AS_POSSIBLE;
++	m_abreastSpeedVehicle = FAST_AS_POSSIBLE;
+ 	if (!addWaypoint && !isFormation) {
+ 		friend_computeGroundPath(pos, cmdSource);
+-		didInfantry = friend_moveInfantryToPos(pos, cmdSource);
+-		didVehicles = friend_moveVehicleToPos(pos, cmdSource);
++		if (cmdSource == CMD_FROM_PLAYER) {
++			didInfantry = friend_moveAbreastToPos(pos, cmdSource, TRUE);
++			didVehicles = friend_moveAbreastToPos(pos, cmdSource, FALSE);
++			m_moveAbreast = didInfantry || didVehicles;
++		} else {
++			didInfantry = friend_moveInfantryToPos(pos, cmdSource);
++			didVehicles = friend_moveVehicleToPos(pos, cmdSource);
++		}
+ 	}
+ 	if (m_dirty)
+ 		recompute();
+@@ -1637,7 +1921,8 @@ void AIGroup::groupMoveToPosition( const Coord3D *p_posIn, Bool addWaypoint, Com
+ 
+     if ( groupMember->isKindOf( KINDOF_PRODUCED_AT_HELIPAD ) )//helicopter
+     {
+-      isFormation = FALSE;
++      // Reforged @feature Helicopters stay in a formation (Ctrl+F) with ground units instead of
++      // dissolving it; they follow the formation's waypoints at the formation's pace.
+       extraMargin = MAX( extraMargin, groupMember->getGeometryInfo().getMajorRadius() );
+     }
+     else if ( groupMember->isKindOf( KINDOF_AIRCRAFT ) )// fixed wing aircraft only
+@@ -2657,6 +2942,9 @@ void AIGroup::groupCreateFormation( CommandSourceType cmdSource )				///< Create
+ 		id = NO_FORMATION_ID;
+ 	}
+ 
++	// Reforged @feature Store offsets relative to the formation's facing (x forward, y left), so the
++	// arrangement the player set up turns with the formation (see formationOffsetToWorld).
++	const Coord2D facing = getMembersFacing( m_memberList );
+ 	for( i = m_memberList.begin(); i != m_memberList.end(); ++i )
+ 	{
+ 		Object *obj = (*i);
+@@ -2664,9 +2952,11 @@ void AIGroup::groupCreateFormation( CommandSourceType cmdSource )				///< Create
+ 		if (ai)
+ 		{
+ 			Coord3D pos = *obj->getPosition();
++			const Real dx = pos.x - center.x;
++			const Real dy = pos.y - center.y;
+ 			Coord2D offset;
+-			offset.x = pos.x - center.x;
+-			offset.y = pos.y - center.y;
++			offset.x = dx * facing.x + dy * facing.y;
++			offset.y = -dx * facing.y + dy * facing.x;
+ 			obj->setFormationID(id);
+ 			obj->setFormationOffset(offset);
+ 		}
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIStates.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIStates.cpp
+index dbfddab21..a2cdbb483 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIStates.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/AI/AIStates.cpp
+@@ -2662,6 +2662,14 @@ StateReturnType AIAttackApproachTargetState::onEnter()
+ 	setAdjustsDestination(false);
+ 	StateReturnType ret =  AIInternalMoveToState::onEnter();
+ 	setAdjustsDestination(true);
++
++	// Reforged @feature A formation (Ctrl+F) approaches its target at the pace of its slowest member,
++	// so faster units don't run ahead of the group into the fight.
++	if (source->getFormationID() != NO_FORMATION_ID)
++	{
++		if (AIGroup *group = ai->getGroup())
++			ai->setDesiredSpeed(group->getSpeed());
++	}
+ 	return ret;
+ }
+ 
+@@ -3299,6 +3307,11 @@ StateReturnType AIFollowPathState::onEnter()
+ 			ai->setDesiredSpeed(speed);
+ 		}
+ 	}
++	// Reforged @feature Units moving abreast keep the pace of the slowest unit of their kind.
++	else if (AIGroup *group = ai->getGroup()) {
++		if (group->isMovingAbreast())
++			ai->setDesiredSpeed(group->getAbreastSpeed(obj->isKindOf(KINDOF_INFANTRY)));
++	}
+  	if (nextPos)
+ 	{
+ 		Coord2D delta;
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Object.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Object.cpp
+index 3abfa003c..da945c692 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Object.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Object.cpp
+@@ -591,6 +591,12 @@ void Object::initObject()
+ 	{
+ 		ThePlayerList->getNeutralPlayer()->getAcademyStats()->recordMine();
+ 	}
++
++	// Reforged @bugfix BUG-030 A new object picks up spy vision that is active on its owner (Satellite Hack etc.).
++	if( Player *owner = getControllingPlayer() )
++	{
++		owner->applyUnitsVisionSpied( this, TRUE );
++	}
+ }
+ 
+ //-------------------------------------------------------------------------------------------------
+@@ -5431,9 +5437,14 @@ void Object::setVisionSpied(Bool setting, Int byWhom)
+ 	}
+ 	else
+ 	{
+-		m_visionSpiedBy[ byWhom ] = m_visionSpiedBy[ byWhom ] - 1;
+-		if( m_visionSpiedBy[ byWhom ] == 0 )
+-			needRefresh = TRUE;
++		// Reforged @bugfix Ending spy vision used to also decrement units that were never spied on (built after it
++		// started), driving the count negative. Never go below zero.
++		if( m_visionSpiedBy[ byWhom ] > 0 )
++		{
++			m_visionSpiedBy[ byWhom ] = m_visionSpiedBy[ byWhom ] - 1;
++			if( m_visionSpiedBy[ byWhom ] == 0 )
++				needRefresh = TRUE;
++		}
+ 	}
+ 
+ 	if( needRefresh )
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptActions.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptActions.cpp
+index 04d6c71db..015b22041 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptActions.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptActions.cpp
+@@ -7204,13 +7204,14 @@ void ScriptActions::executeAction( ScriptAction *pAction )
+ 			doSetStoppingDistance(pAction->getParameter(0)->getString(), pAction->getParameter(1)->getReal());
+ 			return;
+ 		case ScriptAction::SET_FPS_LIMIT:
++			// Reforged @feature Scripts set the game speed, as the fps limit originally did; rendering stays smooth.
+ 			if (!pAction->getParameter(0)->getInt())
+ 			{
+-				TheFramePacer->setFramesPerSecondLimit(TheGlobalData->m_framesPerSecondLimit);
++				TheFramePacer->setGameSpeedFps(TheGlobalData->m_framesPerSecondLimit);
+ 			}
+ 			else
+ 			{
+-				TheFramePacer->setFramesPerSecondLimit(pAction->getParameter(0)->getInt());
++				TheFramePacer->setGameSpeedFps(pAction->getParameter(0)->getInt());
+ 			}
+ 			// Setting the fps limit doesn't do much good if we don't use it.  jba.
+ 			TheWritableGlobalData->m_useFpsLimit = true;
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp
+index 7311db66e..8114fa470 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/ScriptEngine/ScriptEngine.cpp
+@@ -5263,7 +5263,7 @@ void ScriptEngine::reset()
+ {
+ 	// setting FPS limit in case a script had changed it
+ 	if (TheFramePacer && TheGlobalData)
+-		TheFramePacer->setFramesPerSecondLimit(TheGlobalData->m_framesPerSecondLimit);
++		TheFramePacer->setGameSpeedFps(TheGlobalData->m_framesPerSecondLimit); // Reforged @feature smooth rendering
+ 
+ 	if (TheScriptActions) {
+ 		TheScriptActions->reset();
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
+index 0d8d4e646..99d0bfc37 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
+@@ -530,6 +530,9 @@ static Object * placeObjectAtPosition(Int slotNum, AsciiString objectTemplateNam
+ 	return obj;
+ }
+ 
++// Reforged @feature -skirmishTest: starting unit to select once the game is running.
++static ObjectID s_testSkirmishSelectID = INVALID_ID;
++
+ static void placeNetworkBuildingsForPlayer(Int slotNum, const GameSlot *pSlot, Player *pPlayer, const PlayerTemplate *pTemplate)
+ {
+ 	Int startPos = pSlot->getStartPos();
+@@ -591,6 +594,16 @@ static void placeNetworkBuildingsForPlayer(Int slotNum, const GameSlot *pSlot, P
+ 				Object *unit = placeObjectAtPosition(slotNum, objName, objPos, pPlayer, pTemplate);
+ 				if (unit) {
+ 					pPlayer->onUnitCreated(nullptr, unit);
++
++					// Reforged @feature -skirmishTest selects the local player's first starting unit (the
++					// construction vehicle), so screen captures show the faction's build menu.
++					// The selection is applied a few frames into the game (see GameLogic::update), because
++					// the client clears the selection while it finishes loading.
++					if (i == 0 && TheGlobalData->m_testSkirmishSelectDozer && pPlayer == ThePlayerList->getLocalPlayer())
++					{
++						TheWritableGlobalData->m_testSkirmishSelectDozer = FALSE;
++						s_testSkirmishSelectID = unit->getID();
++					}
+ 				}
+ 			}
+ 			else
+@@ -732,6 +745,24 @@ static void populateRandomSideAndColor( GameInfo *game )
+ 
+ 		startSlots.push_back(i);
+ 	}
++
++	// Reforged @bugfix Random AI players only get factions the AI can play (an AIData SideInfo entry). The
++	// human-only Reforged factions would otherwise give an AI player that never does anything.
++	std::vector<Int> aiStartSlots;
++	for (std::vector<Int>::const_iterator it = startSlots.begin(); it != startSlots.end(); ++it)
++	{
++		const PlayerTemplate* pt = ThePlayerTemplateStore->getNthPlayerTemplate(*it);
++		for (const AISideInfo *info = TheAI->getAiData()->m_sideInfo; info; info = info->m_next)
++		{
++			if (info->m_side == pt->getSide())
++			{
++				aiStartSlots.push_back(*it);
++				break;
++			}
++		}
++	}
++	if (aiStartSlots.empty())
++		aiStartSlots = startSlots;
+ #endif
+ 
+ 	for (i=0; i<MAX_SLOTS; ++i)
+@@ -756,8 +787,9 @@ static void populateRandomSideAndColor( GameInfo *game )
+ 			{
+ 				GameLogicRandomValue(0, 1);	// ignore result
+ 			}
+-			Int idxIdx = GameLogicRandomValue(0, 1000) % startSlots.size();
+-			playerTemplateIdx = startSlots[idxIdx];
++			const std::vector<Int>& choices = slot->isAI() ? aiStartSlots : startSlots;
++			Int idxIdx = GameLogicRandomValue(0, 1000) % choices.size();
++			playerTemplateIdx = choices[idxIdx];
+ #else
+ 			playerTemplateIdx = GameLogicRandomValue(0, ThePlayerTemplateStore->getPlayerTemplateCount()-1);
+ #endif
+@@ -3727,6 +3759,14 @@ void GameLogic::update()
+ 	UnsignedInt now = getFrame();
+ 	TheGameClient->setFrame(now);
+ 
++	if (s_testSkirmishSelectID != INVALID_ID && now >= 5)
++	{
++		Object *unit = findObjectByID(s_testSkirmishSelectID);
++		s_testSkirmishSelectID = INVALID_ID;
++		if (unit && unit->getDrawable())
++			TheInGameUI->selectDrawable(unit->getDrawable());
++	}
++
+ 	PROFILER_PLOT("LogicFrame", static_cast<int64_t>(now));
+ 
+ 	// update (execute) scripts

@@ -1,0 +1,367 @@
+﻿diff --git a/Core/GameEngine/Include/GameClient/Display.h b/Core/GameEngine/Include/GameClient/Display.h
+index 9fc937bfa..9d20c68c5 100644
+--- a/Core/GameEngine/Include/GameClient/Display.h
++++ b/Core/GameEngine/Include/GameClient/Display.h
+@@ -86,6 +86,12 @@ public:
+ 	virtual void setHeight( UnsignedInt height );									///< Sets the height of the display
+ 	virtual UnsignedInt getWidth() { return m_width; }			///< Returns the width of the display
+ 	virtual UnsignedInt getHeight() { return m_height; }		///< Returns the height of the display
++
++	// Reforged @feature Widescreen UI. The 800x600 UI layout is scaled uniformly by the display height
++	// and centered on displays wider than 4:3, instead of being stretched to the full display width.
++	// Displays that are 4:3 or narrower keep the original scaling, and the offset is then 0.
++	UnsignedInt getUIWidth() { const UnsignedInt w = getHeight() * 4 / 3; return getWidth() < w ? getWidth() : w; }	///< Width of the centered 4:3 UI area
++	Int getUIOffsetX() { return ((Int)getWidth() - (Int)getUIWidth()) / 2; }	///< Left edge of the centered 4:3 UI area
+ 	virtual void setBitDepth( UnsignedInt bitDepth ) { m_bitDepth = bitDepth; }
+ 	virtual UnsignedInt getBitDepth() { return m_bitDepth; }
+ 	virtual void setWindowed( Bool windowed ) { m_windowed = windowed; }  ///< set windowed/fullscreen flag
+diff --git a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarScheme.cpp b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarScheme.cpp
+index 4dce3dcaa..482e666f7 100644
+--- a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarScheme.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarScheme.cpp
+@@ -427,9 +427,11 @@ void ControlBarScheme::init()
+ 		TheControlBar->setArrowImage( m_genArrow);
+ 	}
+ 	GameWindow *win = nullptr;
++	// Reforged @feature Widescreen UI: place the buttons in the centered 4:3 UI area.
+ 	Coord2D resMultiplier;
+-	resMultiplier.x = TheDisplay->getWidth()/INT_TO_REAL(m_ScreenCreationRes.x) ;
++	resMultiplier.x = TheDisplay->getUIWidth()/INT_TO_REAL(m_ScreenCreationRes.x) ;
+ 	resMultiplier.y = TheDisplay->getHeight()/INT_TO_REAL(m_ScreenCreationRes.y);
++	const Int uiOffsetX = TheDisplay->getUIOffsetX();
+ 
+ 	win= TheWindowManager->winGetWindowFromId( nullptr, TheNameKeyGenerator->nameToKey( "ControlBar.wnd:PopupCommunicator" ) );
+ 	if(win)
+@@ -448,12 +450,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_chatUL.x * resMultiplier.x - parX;
++			x = m_chatUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_chatUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_chatUL.x * resMultiplier.x;
++			x = m_chatUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_chatUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -473,12 +475,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_workerUL.x * resMultiplier.x - parX;
++			x = m_workerUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_workerUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_workerUL.x * resMultiplier.x;
++			x = m_workerUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_workerUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -504,12 +506,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_optionsUL.x * resMultiplier.x - parX;
++			x = m_optionsUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_optionsUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_optionsUL.x * resMultiplier.x;
++			x = m_optionsUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_optionsUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -529,12 +531,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_beaconUL.x * resMultiplier.x - parX;
++			x = m_beaconUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_beaconUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_beaconUL.x * resMultiplier.x;
++			x = m_beaconUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_beaconUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -551,12 +553,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_moneyUL.x * resMultiplier.x - parX;
++			x = m_moneyUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_moneyUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_moneyUL.x * resMultiplier.x;
++			x = m_moneyUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_moneyUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -573,12 +575,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_powerBarUL.x * resMultiplier.x - parX;
++			x = m_powerBarUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_powerBarUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_powerBarUL.x * resMultiplier.x;
++			x = m_powerBarUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_powerBarUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -601,12 +603,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_generalUL.x * resMultiplier.x - parX;
++			x = m_generalUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_generalUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_generalUL.x * resMultiplier.x;
++			x = m_generalUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_generalUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -627,12 +629,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_minMaxUL.x * resMultiplier.x - parX;
++			x = m_minMaxUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_minMaxUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_minMaxUL.x * resMultiplier.x;
++			x = m_minMaxUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_minMaxUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -651,12 +653,12 @@ void ControlBarScheme::init()
+ 		{
+ 			Int parX, parY;
+ 			parent->winGetScreenPosition(&parX, &parY);
+-			x = m_uAttackUL.x * resMultiplier.x - parX;
++			x = m_uAttackUL.x * resMultiplier.x + uiOffsetX - parX;
+ 			y = m_uAttackUL.y * resMultiplier.y - parY;
+ 		}
+ 		else
+ 		{
+-			x = m_uAttackUL.x * resMultiplier.x;
++			x = m_uAttackUL.x * resMultiplier.x + uiOffsetX;
+ 			y = m_uAttackUL.y * resMultiplier.y;
+ 		}
+ 		win->winSetPosition(x,y );
+@@ -1050,7 +1052,7 @@ void ControlBarSchemeManager::setControlBarScheme(AsciiString schemeName)
+ 	if(tempScheme)
+ 	{
+ 		// setup the multiplier value
+-		m_multiplier.x = (Real)TheDisplay->getWidth() / tempScheme->m_ScreenCreationRes.x;
++		m_multiplier.x = (Real)TheDisplay->getUIWidth() / tempScheme->m_ScreenCreationRes.x;
+ 		m_multiplier.y = (Real)TheDisplay->getHeight() / tempScheme->m_ScreenCreationRes.y;
+ 		m_currentScheme = tempScheme;
+ 	}
+@@ -1075,12 +1077,16 @@ void ControlBarSchemeManager::update()
+ //-----------------------------------------------------------------------------
+ void ControlBarSchemeManager::drawForeground( ICoord2D offset )
+ {
++	// Reforged @feature Widescreen UI: the scheme images are in absolute screen space, so shift
++	// them into the centered 4:3 UI area like the control bar windows.
++	offset.x += TheDisplay->getUIOffsetX();
+ 	if(m_currentScheme)
+ 		m_currentScheme->drawForeground( m_multiplier, offset);
+ }
+ //-----------------------------------------------------------------------------
+ void ControlBarSchemeManager::drawBackground( ICoord2D offset )
+ {
++	offset.x += TheDisplay->getUIOffsetX();
+ 	if(m_currentScheme)
+ 		m_currentScheme->drawBackground( m_multiplier, offset );
+ }
+@@ -1132,7 +1138,7 @@ void ControlBarSchemeManager::setControlBarSchemeByPlayerTemplate( const PlayerT
+ 	if(tempScheme)
+ 	{
+ 		// setup the multiplier value
+-		m_multiplier.x = TheDisplay->getWidth() / (Real)tempScheme->m_ScreenCreationRes.x;
++		m_multiplier.x = TheDisplay->getUIWidth() / (Real)tempScheme->m_ScreenCreationRes.x;
+ 		m_multiplier.y = TheDisplay->getHeight() / (Real)tempScheme->m_ScreenCreationRes.y;
+ 		m_currentScheme = tempScheme;
+ 	}
+@@ -1200,7 +1206,7 @@ void ControlBarSchemeManager::setControlBarSchemeByPlayer(Player *p)
+ 	if(tempScheme)
+ 	{
+ 		// setup the multiplier value
+-		m_multiplier.x = TheDisplay->getWidth() / (Real)tempScheme->m_ScreenCreationRes.x;
++		m_multiplier.x = TheDisplay->getUIWidth() / (Real)tempScheme->m_ScreenCreationRes.x;
+ 		m_multiplier.y = TheDisplay->getHeight() / (Real)tempScheme->m_ScreenCreationRes.y;
+ 		m_currentScheme = tempScheme;
+ 	}
+diff --git a/Core/GameEngine/Source/GameClient/GUI/GameWindowManagerScript.cpp b/Core/GameEngine/Source/GameClient/GUI/GameWindowManagerScript.cpp
+index 2b37cc9c3..f3e562551 100644
+--- a/Core/GameEngine/Source/GameClient/GUI/GameWindowManagerScript.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/GameWindowManagerScript.cpp
+@@ -558,11 +558,13 @@ static Bool parseScreenRect( const char *token, char *buffer,
+ 	// shrink or expand the screen region by the ratio of the current
+ 	// resolution divided by the creation resolution
+ 	//
+-	Real xScale = (Real)TheDisplay->getWidth() / (Real)createRes.x;
++	// Reforged @feature Widescreen UI: scale into the centered 4:3 UI area (see Display::getUIWidth).
++	Real xScale = (Real)TheDisplay->getUIWidth() / (Real)createRes.x;
+ 	Real yScale = (Real)TheDisplay->getHeight() / (Real)createRes.y;
+-	screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * xScale);
++	const Int xOffset = TheDisplay->getUIOffsetX();
++	screenRegion.lo.x = (Int)((Real)screenRegion.lo.x * xScale) + xOffset;
+ 	screenRegion.lo.y = (Int)((Real)screenRegion.lo.y * yScale);
+-	screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * xScale);
++	screenRegion.hi.x = (Int)((Real)screenRegion.hi.x * xScale) + xOffset;
+ 	screenRegion.hi.y = (Int)((Real)screenRegion.hi.y * yScale);
+ 
+ 	//
+diff --git a/Core/GameEngine/Source/GameClient/GlobalLanguage.cpp b/Core/GameEngine/Source/GameClient/GlobalLanguage.cpp
+index a9bc586d4..8d9310b1f 100644
+--- a/Core/GameEngine/Source/GameClient/GlobalLanguage.cpp
++++ b/Core/GameEngine/Source/GameClient/GlobalLanguage.cpp
+@@ -214,7 +214,8 @@ Real GlobalLanguage::getResolutionFontSizeScale(ResolutionFontSizeMethod method,
+ 	{
+ 		// TheSuperHackers @info The original font scaling for this game.
+ 		// Useful for not breaking legacy Addons and Mods. Scales poorly with large resolutions.
+-		adjustFactor = TheDisplay->getWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
++		// Reforged @feature Widescreen UI: measure the centered 4:3 UI area so text matches the UI scale.
++		adjustFactor = TheDisplay->getUIWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
+ 		adjustFactor = 1.0f + (adjustFactor - 1.0f) * scaler;
+ 		if (adjustFactor > 2.0f)
+ 			adjustFactor = 2.0f;
+@@ -224,7 +225,8 @@ Real GlobalLanguage::getResolutionFontSizeScale(ResolutionFontSizeMethod method,
+ 	{
+ 		// TheSuperHackers @feature The original font scaling, but without ceiling.
+ 		// Useful for not changing the original look of the game. Scales alright with large resolutions.
+-		adjustFactor = TheDisplay->getWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
++		// Reforged @feature Widescreen UI: measure the centered 4:3 UI area so text matches the UI scale.
++		adjustFactor = TheDisplay->getUIWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
+ 		adjustFactor = 1.0f + (adjustFactor - 1.0f) * scaler;
+ 		break;
+ 	}
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/GUI/Gadget/W3DHorizontalSlider.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/GUI/Gadget/W3DHorizontalSlider.cpp
+index 804b0c2b9..b6acfcc4e 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/GUI/Gadget/W3DHorizontalSlider.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/GUI/Gadget/W3DHorizontalSlider.cpp
+@@ -150,7 +150,8 @@ void W3DGadgetHorizontalSliderImageDraw( GameWindow *window,
+ 
+ 	SliderData *s = (SliderData *)window->winGetUserData();
+ 
+-	Real xMulti = INT_TO_REAL(TheDisplay->getWidth()) / DEFAULT_DISPLAY_WIDTH;
++	// Reforged @feature Widescreen UI: scale like the centered 4:3 UI area.
++	Real xMulti = INT_TO_REAL(TheDisplay->getUIWidth()) / DEFAULT_DISPLAY_WIDTH;
+ 
+ 	// figure out how many boxes we draw for this slider
+ 	Int numBoxes = 0;
+@@ -229,7 +230,8 @@ void W3DGadgetHorizontalSliderImageDrawB( GameWindow *window,
+ 
+ 	SliderData *s = (SliderData *)window->winGetUserData();
+ 
+-	Real xMulti = INT_TO_REAL(TheDisplay->getWidth()) / DEFAULT_DISPLAY_WIDTH;
++	// Reforged @feature Widescreen UI: scale like the centered 4:3 UI area.
++	Real xMulti = INT_TO_REAL(TheDisplay->getUIWidth()) / DEFAULT_DISPLAY_WIDTH;
+ 	Real yMulti = INT_TO_REAL(TheDisplay->getHeight()) / DEFAULT_DISPLAY_HEIGHT;
+ 	// get image offset
+ 	xOffset = instData->m_imageOffset.x;
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+index 95183f37b..c319a243d 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+@@ -221,6 +221,24 @@ void W3DView::setHeight(Int height)
+ 	m_lastScreenToTerrainValid = false;
+ }
+ 
++//-------------------------------------------------------------------------------------------------
++// Reforged @feature Hor+ widescreen. The horizontal FOV was fixed for every display shape, so a
++// display wider than 4:3 cropped the top and bottom of the view. Convert the 4:3 horizontal FOV
++// so that wider displays keep the 4:3 vertical FOV and see more to the sides instead. Displays
++// that are 4:3 or narrower are unchanged. The widening is capped at 16:9; wider displays crop
++// vertically beyond that, because the terrain draw area was only verified for up to 16:9.
++//-------------------------------------------------------------------------------------------------
++static Real getWidescreenHorizontalFov(Real horizontalFov4x3)
++{
++	const Real referenceWidth = (Real)TheDisplay->getHeight() * 4.0f / 3.0f;
++	const Real widthRatio = std::min((Real)TheDisplay->getWidth() / referenceWidth, (16.0f / 9.0f) / (4.0f / 3.0f));
++
++	if (widthRatio <= 1.0f)
++		return horizontalFov4x3;
++
++	return 2.0f * atan(tan(horizontalFov4x3 * 0.5f) * widthRatio);
++}
++
+ //-------------------------------------------------------------------------------------------------
+ /** Sets the width of the viewport, while maintaining original camera perspective. */
+ //-------------------------------------------------------------------------------------------------
+@@ -237,7 +255,7 @@ void W3DView::setWidth(Int width)
+ 
+ 	//we want to maintain the same scale, so we'll need to adjust the fov.
+ 	//default W3D fov for full-screen is 50 degrees.
+-	m_3DCamera->Set_View_Plane((Real)width/(Real)TheDisplay->getWidth()*DEG_TO_RADF(50.0f),-1);
++	m_3DCamera->Set_View_Plane((Real)width/(Real)TheDisplay->getWidth()*getWidescreenHorizontalFov(DEG_TO_RADF(50.0f)),-1);
+ 
+ 	m_cameraAreaConstraintsValid = false;
+ 	m_recalcCamera = true;
+@@ -832,7 +850,7 @@ void W3DView::setCameraTransform(const Matrix3D &transform)
+ 	m_lastScreenToTerrainValid = false;
+ 
+ #if defined(RTS_DEBUG)
+-	m_3DCamera->Set_View_Plane( m_FOV, -1 );
++	m_3DCamera->Set_View_Plane( getWidescreenHorizontalFov(m_FOV), -1 );
+ #endif
+ 
+ 	m_3DCamera->Set_Transform(transform);
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/PopupPlayerInfo.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/PopupPlayerInfo.cpp
+index 5b71b4b81..a1546dd11 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/PopupPlayerInfo.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/PopupPlayerInfo.cpp
+@@ -469,7 +469,8 @@ void ResetBattleHonorInsertion()
+ }
+ void InsertBattleHonor(GameWindow *list, const Image *image, Bool enabled, Int itemData, Int& row, Int& column, UnicodeString text = UnicodeString::TheEmptyString, Int extra = 0)
+ {
+-	Int width = MAX_BATTLE_HONOR_IMAGE_WIDTH * (TheDisplay->getWidth() / (Real)DEFAULT_DISPLAY_WIDTH);
++	// Reforged @feature Widescreen UI: scale like the centered 4:3 UI area.
++	Int width = MAX_BATTLE_HONOR_IMAGE_WIDTH * (TheDisplay->getUIWidth() / (Real)DEFAULT_DISPLAY_WIDTH);
+ 	Int height = MAX_BATTLE_HONOR_IMAGE_HEIGHT * (TheDisplay->getHeight() / (Real)DEFAULT_DISPLAY_HEIGHT);
+ 
+ 	static Int enabledColor = 0xFFFFFFFF;
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp
+index b37408e6a..bc5fa6d4f 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/InGameUI.cpp
+@@ -4456,8 +4456,9 @@ void InGameUI::militarySubtitle( const AsciiString& label, Int duration )
+ 	disableTooltipsUntil(messageTimeout);
+ 
+ 	// calculate where this screen position should be since the position being passed in is based off 8x6
++	// Reforged @feature Widescreen UI: map into the centered 4:3 UI area.
+ 	Coord2D multiplier;
+-	multiplier.x = (Real)TheDisplay->getWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
++	multiplier.x = (Real)TheDisplay->getUIWidth() / (Real)DEFAULT_DISPLAY_WIDTH;
+ 	multiplier.y = (Real)TheDisplay->getHeight() / (Real)DEFAULT_DISPLAY_HEIGHT;
+ 
+ 	// lets bring out the data structure!
+@@ -4467,7 +4468,7 @@ void InGameUI::militarySubtitle( const AsciiString& label, Int duration )
+ 	m_militarySubtitle->blockDrawn = TRUE;
+ 	m_militarySubtitle->blockBeginFrame = currLogicFrame;
+ 	m_militarySubtitle->lifetime = messageTimeout;
+-	m_militarySubtitle->blockPos.x =  m_militarySubtitle->position.x = m_militaryCaptionPosition.x * multiplier.x;
++	m_militarySubtitle->blockPos.x =  m_militarySubtitle->position.x = m_militaryCaptionPosition.x * multiplier.x + TheDisplay->getUIOffsetX();
+ 	m_militarySubtitle->blockPos.y =  m_militarySubtitle->position.y = m_militaryCaptionPosition.y * multiplier.y;
+ 	m_militarySubtitle->incrementOnFrame = currLogicFrame + (Int)(((Real)LOGICFRAMES_PER_SECOND * TheGlobalLanguageData->m_militaryCaptionDelayMS)/1000.0f);
+ 	m_militarySubtitle->index = 0;
