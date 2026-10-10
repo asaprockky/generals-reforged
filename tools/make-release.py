@@ -14,6 +14,7 @@ Usage:
   python tools/make-release.py [VERSION]
 """
 import argparse
+import glob
 import os
 import shutil
 import sys
@@ -30,6 +31,9 @@ GEN_DIR = os.path.join(INSTALL, "Command & Conquer(tm) Generals")
 EXE = os.path.join(ROOT, "builds", "generalszh-reforged.exe")
 STAGE = os.path.join(ROOT, "build-release", "stage")
 OUT_DIR = os.path.join(ROOT, "release", "GeneralsReforged")
+# The exe links the VC++ runtime dynamically; ship it app-local so a clean PC needs no installer.
+VC_REDIST = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Microsoft Visual Studio", "2022", "BuildTools", "VC", "Redist", "MSVC", "*", "x86", "Microsoft.VC143.CRT")
+VC_DLLS = ("msvcp140.dll", "msvcp140_atomic_wait.dll", "vcruntime140.dll")
 OWN_ARCHIVES = {"!zhoverhaul.big", "zhreforged.big"}
 SYNC_PREFIXES = ("data\\ini\\", "data\\scripts\\")
 
@@ -133,13 +137,19 @@ You need your own installed copy of C&C Generals Zero Hour (1.04), for example
 from Steam or the EA app ("Command & Conquer The Ultimate Collection").
 This package does not contain the game and does not change your game folder.
 
-INSTALL
-1. Unzip this folder anywhere (for example inside your Zero Hour folder).
-2. Double-click Play-Generals-Reforged.cmd.
-   If it cannot find the game, paste your Zero Hour folder path (the one with
-   WindowZH.big in it) into game-folder.txt and run it again.
-3. Windows may warn about an unknown app: click "More info" -> "Run anyway".
+INSTALL (clean Zero Hour install)
+1. Install C&C Generals Zero Hour from Steam or the EA app and start it once
+   normally, then quit. (The first start registers the game with Windows.)
+2. Right-click the downloaded zip -> Extract All. Do not run it from inside the zip.
+3. Double-click Play-Generals-Reforged.cmd in the extracted folder.
+   If it says it cannot find the game: in Steam right-click the game ->
+   Manage -> Browse local files, copy that folder's path (the folder with
+   WindowZH.big in it), paste it into game-folder.txt, save, run again.
+4. Windows may warn about an unknown app: click "More info" -> "Run anyway".
    Allow it through the Windows Firewall (private networks) for LAN games.
+5. In the game: Options -> resolution 1920x1080 (or your screen's size).
+
+To remove Reforged, delete the extracted folder. The game itself is unchanged.
 
 PLAY TOGETHER (LAN)
 - Both players must use this same package version. Each player runs
@@ -155,6 +165,7 @@ FILES
   ZHReforged.big              Reforged game data
   Play-Generals-Reforged.cmd  launcher
   SOURCE.txt                  where the source code is
+  msvcp140*.dll, vcruntime140.dll  Microsoft Visual C++ runtime (redistributable)
 
 Fan-made, non-commercial. Command & Conquer is a trademark of Electronic Arts.
 Not affiliated with or endorsed by EA.
@@ -187,6 +198,11 @@ def main():
     os.makedirs(OUT_DIR)
     bigtool.cmd_pack(argparse.Namespace(srcdir=STAGE, archive=os.path.join(OUT_DIR, "ZHReforged.big")))
     shutil.copyfile(EXE, os.path.join(OUT_DIR, "GeneralsReforged.exe"))
+    redist = sorted(glob.glob(VC_REDIST))
+    if not redist:
+        sys.exit(f"VC++ redist not found: {VC_REDIST}")
+    for dll in VC_DLLS:
+        shutil.copyfile(os.path.join(redist[-1], dll), os.path.join(OUT_DIR, dll))
     with open(os.path.join(OUT_DIR, "Play-Generals-Reforged.cmd"), "w", newline="\r\n") as f:
         f.write(LAUNCHER)
     with open(os.path.join(OUT_DIR, "README.txt"), "w", newline="\r\n") as f:

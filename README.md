@@ -15,10 +15,17 @@ A fan mod for **Command & Conquer Generals Zero Hour**, built on the open-source
 You need your own installed copy of **C&C Generals Zero Hour 1.04** (Steam or EA app,
 "Command & Conquer The Ultimate Collection"). Nothing here contains or changes the original game.
 
-1. Download `GeneralsReforged-<version>.zip` from [Releases](../../releases).
-2. Unzip it anywhere and double-click `Play-Generals-Reforged.cmd`.
-3. If it cannot find the game, paste your Zero Hour folder (the one with `WindowZH.big`)
-   into `game-folder.txt` next to the launcher and run it again.
+1. Install Zero Hour (Steam or EA app), start it once normally, then quit.
+2. Download `GeneralsReforged-<version>.zip` from [Releases](../../releases),
+   right-click it → **Extract All** (don't run it from inside the zip).
+3. Double-click `Play-Generals-Reforged.cmd` in the extracted folder.
+4. If it cannot find the game: Steam → right-click the game → Manage → Browse local files,
+   copy that folder's path (the one with `WindowZH.big`), paste it into `game-folder.txt`
+   next to the launcher, save, and run it again.
+5. Windows may warn about an unknown app: **More info → Run anyway**.
+6. In the game, set Options → resolution to your screen (e.g. 1920×1080).
+
+The game folder is never modified; to remove Reforged, delete the extracted folder.
 
 LAN with a friend: both use the same release, then Multiplayer → Network, one creates a game,
 the other joins. Not on the same network? Use a virtual LAN such as Radmin VPN or ZeroTier.
